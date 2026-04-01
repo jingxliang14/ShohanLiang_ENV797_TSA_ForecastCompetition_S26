@@ -1,0 +1,67 @@
+Lauren Shohan & Cecilia Liang
+April.1st
+
+
+## Set up
+```{r}
+#Load/install required package here
+library(lubridate)
+library(ggplot2)
+library(forecast)  
+library(Kendall)
+library(tseries)
+library(outliers)
+library(tidyverse)
+library(cowplot)
+library(forecast)
+library(trend)
+library(readxl)
+
+```
+#Average down to daily data 
+```{r}
+humidity <- read_excel("~/R/ShohanLiang_ENV797_TSA_ForecastCompetition_S26/relative_humidity.xlsx")
+View(humidity) 
+
+temperature <- read_excel("~/R/ShohanLiang_ENV797_TSA_ForecastCompetition_S26/temperature.xlsx")
+View(temperature)
+
+load <- read_excel("~/R/ShohanLiang_ENV797_TSA_ForecastCompetition_S26/load.xlsx")
+View(load)
+```
+
+
+```{r}
+load_daily <- load %>%
+  select(date, h1:h24) %>%                        
+  pivot_longer(cols = h1:h24,                      
+               names_to = "hour",
+               values_to = "load") %>%
+  group_by(date) %>%                               
+  summarise(daily_load = mean(load, na.rm = TRUE))
+```
+
+```{r}
+temp_daily <- temperature %>% 
+  select(date, h1:h24) %>% 
+  pivot_longer(cols = h1 : h24)
+
+temp_daily <- temperature %>%
+  group_by(date) %>%
+  summarise(daily_temp = mean(c_across(starts_with("t_ws")), na.rm = TRUE))
+
+humi_daily <- humidity %>%
+  group_by(date) %>%
+  summarise(humi_daily = mean(c_across(starts_with("rh_ws")), na.rm = TRUE))
+
+```
+
+
+```{r}
+daily_data <- load_daily %>%
+  left_join(temp_daily, by = "date") %>%
+  left_join(humi_daily,  by = "date") %>%
+  arrange(date)
+```
+
+#Create time series object
