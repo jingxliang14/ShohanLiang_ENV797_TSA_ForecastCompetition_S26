@@ -1,3 +1,8 @@
+---
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
 Lauren Shohan & Cecilia Liang
 April.1st
 
@@ -62,6 +67,46 @@ daily_data <- load_daily %>%
   left_join(temp_daily, by = "date") %>%
   left_join(humi_daily,  by = "date") %>%
   arrange(date)
+
+View(daily_data)
+summary(daily_data)
 ```
 
 #Create time series object
+```{r}
+load_msts <- msts(daily_data$daily_load,
+                  seasonal.periods = c(7, 365.25),
+                  start = c(2005, 1)) 
+
+View(load_msts)
+
+train <- daily_data %>% filter(date <= as.Date("2010-06-30"))
+val   <- daily_data %>% filter(date >= as.Date("2010-07-01") &
+                               date <= as.Date("2010-07-31"))
+
+train_msts <- msts(train$daily_load,
+                   seasonal.periods = c(7, 365.25),
+                   start = c(2005, 1))
+```
+
+```{r}
+nrow(train)        
+nrow(val)         
+sum(is.na(daily_data$daily_load))   
+
+# Plot to visually inspect
+plot(train_msts, main = "Daily Load - Training Data")
+```
+```{r}
+TBATS_fit <- tbats(train_msts)
+TBATS_for <- forecast(TBATS_fit, h = 31)
+
+```
+
+```{r}
+autoplot(TBATS_for) +
+  ggtitle("TBATS Forecast - July 2011") +
+  xlab("Date") + ylab("Daily Load")
+
+```
+
