@@ -119,10 +119,10 @@ plot(train_full_msts, main = "Daily Load - Training Data")
 # repeats = 20 averages over multiple random initializations for stability.
 
 ```{r}
-NNETAR_fit  <- nnetar(train_full_msts, repeats = 20)
-NNETAR_for  <- forecast(NNETAR_fit, h = 31)
+TBATS_fit   <- tbats(train_full_msts)
+TBATS_for   <- forecast(TBATS_fit, h = 31)
 
-autoplot(NNETAR_for) +
+autoplot(TBATS_for) +
   ggtitle("NNETAR Forecast - July 2010") +
   xlab("Date") + ylab("Daily Load")
 ```
@@ -135,11 +135,11 @@ forecast_dates <- seq(as.Date("2011-07-01"), as.Date("2011-07-31"), by = "day")
 # Change the $mean to whichever model you want to submit
 submission <- data.frame(
   date = forecast_dates,
-  load = as.numeric(NNETAR_for$mean)   # swap for STLF_fit$mean or NNETAR_for$mean
+  load = as.numeric(TBATS_for$mean)   # swap for STLF_fit$mean or NNETAR_for$mean
 )
 
 write.csv(submission,
-          file = "~/Competition/ShohanLiang_Competition/submission_NNETAR_2.csv",
+          file = "~/Competition/ShohanLiang_Competition/submission_TBATS_3.csv",
           row.names = FALSE,
           )
 ```
