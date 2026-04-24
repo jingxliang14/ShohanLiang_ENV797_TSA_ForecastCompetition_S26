@@ -1,0 +1,173 @@
+---
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+Lauren Shohan & Cecilia Liang
+April.1st
+
+
+## Set up
+```{r}
+#Load/install required package here
+library(lubridate)
+library(ggplot2)
+library(forecast)  
+library(Kendall)
+library(tseries)
+library(outliers)
+library(tidyverse)
+library(cowplot)
+library(forecast)
+library(trend)
+library(readxl)
+
+```
+#Average down to daily data 
+```{r}
+#For ceclia
+#humidity <- read_excel("~/R/ShohanLiang_ENV797_TSA_ForecastCompetition_S26/relative_humidity.xlsx")
+#View(humidity) 
+
+#temperature <- read_excel("~/R/ShohanLiang_ENV797_TSA_ForecastCompetition_S26/temperature.xlsx")
+#View(temperature)
+
+#load <- read_excel("~/R/ShohanLiang_ENV797_TSA_ForecastCompetition_S26/load.xlsx")
+#View(load)
+```
+
+```{r}
+#For laurens computer
+humidity <- read_excel("~/Competition/ShohanLiang_Competition/relative_humidity.xlsx")
+
+temperature <- read_excel("~/Competition/ShohanLiang_Competition/temperature.xlsx")
+
+load <- read_excel("~/Competition/ShohanLiang_Competition/load.xlsx")
+
+```
+
+```{r}
+load_daily <- load %>%
+  select(date, h1:h24) %>%                        
+  pivot_longer(cols = h1:h24,                      
+               names_to = "hour",
+               values_to = "load") %>%
+  group_by(date) %>%                               
+  summarise(daily_load = mean(load, na.rm = TRUE))
+```
+
+```{r}
+# Temperature: pivot weather stations long, then average by date
+temp_daily <- temperature %>%
+  pivot_longer(cols = starts_with("t_ws"),
+               names_to  = "station",
+               values_to = "temp") %>%
+  group_by(date) %>%
+  summarise(daily_temp = mean(temp, na.rm = TRUE))
+
+# Humidity: same pattern with rh_ws columns
+humi_daily <- humidity %>%
+  pivot_longer(cols = starts_with("rh_ws"),
+               names_to  = "station",
+               values_to = "humidity") %>%
+  group_by(date) %>%
+  summarise(humi_daily = mean(humidity, na.rm = TRUE))
+
+```
+
+
+```{r}
+daily_data <- load_daily %>%
+  left_join(temp_daily, by = "date") %>%
+  left_join(humi_daily,  by = "date") %>%
+  arrange(date)
+
+
+summary(daily_data)
+```
+
+#Create time series object
+```{r}
+
+train_full <- daily_data %>% filter(date <= as.Date("2011-06-30"))
+
+train_full_msts <- msts(train_full$daily_load,
+                        seasonal.periods = c(7, 365.25),
+                        start = c(2005, 1))
+```
+
+```{r}
+#Fourier terms to capture weekly + annual seasonality 
+# K = c(3, 10): 3 harmonics for weekly, 10 for annual
+K_vec     <- c(3, 10)
+fourier_train <- fourier(train_full_msts, K = K_vec)
+```
+
+
+
+```{r}
+#weather training
+xreg_train <- cbind(
+  fourier_train,
+  temp = train_full$daily_temp,
+  humi = train_full$humi_daily)
+```
+
+```{r}
+#arima with fourier + weather 
+#ran this to find best models.... (0,1,4) seems best
+#ARIMAX_fit <- auto.arima(train_full$daily_load,
+ #                        xreg = xreg_train,
+  #                       seasonal = FALSE,  
+   #                      stepwise = FALSE,   
+    #                     approximation = FALSE,
+     #                    trace = TRUE)
+
+
+ARIMAX_fit <- Arima(train_full$daily_load,
+                    order = c(0, 1, 5),
+                    xreg  = xreg_train)
+
+```
+
+
+```{r}
+july_proxy <- daily_data %>%
+  filter(date >= as.Date("2010-07-01") & date <= as.Date("2010-07-31"))
+```
+
+```{r}
+fourier_future <- fourier(train_full_msts, K = K_vec, h = 31)
+
+```
+
+```{r}
+xreg_future <- cbind(
+  fourier_future,
+  temp = july_proxy$daily_temp,
+  humi = july_proxy$humi_daily)
+
+ARIMAX_for <- forecast(ARIMAX_fit, xreg = xreg_future, h = 31)
+
+autoplot(ARIMAX_for) +
+  ggtitle("ARIMA + Fourier + Weather Covariates - July 2011") +
+  xlab("Date") + ylab("Daily Load")
+
+```
+
+# trying to output
+```{r}
+#Build one submission file per model 
+forecast_dates <- seq(as.Date("2011-07-01"), as.Date("2011-07-31"), by = "day")
+
+
+submission <- data.frame(
+  date = forecast_dates,
+  load = as.numeric(ARIMAX_for$mean))
+
+write.csv(submission,
+          file = "~/Competition/ShohanLiang_Competition/submission_ARIMAX_6.csv",
+          row.names = FALSE,
+          )
+```
+
