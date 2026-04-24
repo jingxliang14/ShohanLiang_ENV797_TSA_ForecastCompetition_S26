@@ -114,15 +114,6 @@ xreg_train <- cbind(
 ```
 
 ```{r}
-#arima with fourier + weather 
-#ran this to find best models.... (0,1,4) seems best
-#ARIMAX_fit <- auto.arima(train_full$daily_load,
- #                        xreg = xreg_train,
-  #                       seasonal = FALSE,  
-   #                      stepwise = FALSE,   
-    #                     approximation = FALSE,
-     #                    trace = TRUE)
-
 
 ARIMAX_fit <- Arima(train_full$daily_load,
                     order = c(0, 1, 5),
@@ -130,44 +121,45 @@ ARIMAX_fit <- Arima(train_full$daily_load,
 
 ```
 
-
 ```{r}
-july_proxy <- daily_data %>%
-  filter(date >= as.Date("2010-07-01") & date <= as.Date("2010-07-31"))
+TBATS_fit <- tbats(train_full_msts)
+TBATS_for <- forecast(TBATS_fit, h = 31)
 ```
 
 ```{r}
-fourier_future <- fourier(train_full_msts, K = K_vec, h = 31)
+STLF_fit <- stlf(train_full_msts, h = 31, method = "ets")
 
 ```
 
 ```{r}
-xreg_future <- cbind(
-  fourier_future,
-  temp = july_proxy$daily_temp,
-  humi = july_proxy$humi_daily)
-
-ARIMAX_for <- forecast(ARIMAX_fit, xreg = xreg_future, h = 31)
-
-autoplot(ARIMAX_for) +
-  ggtitle("ARIMA + Fourier + Weather Covariates - July 2011") +
-  xlab("Date") + ylab("Daily Load")
+NNETAR_fit <- nnetar(train_full_msts, repeats = 20)
+NNETAR_for <- forecast(NNETAR_fit, h = 31)
 
 ```
+
+
 
 # trying to output
 ```{r}
 #Build one submission file per model 
 forecast_dates <- seq(as.Date("2011-07-01"), as.Date("2011-07-31"), by = "day")
 
+ensemble_load <- (as.numeric(TBATS_for$mean) +
+                  as.numeric(STLF_fit$mean) +
+                  as.numeric(NNETAR_for$mean)) / 3
+```
 
-submission <- data.frame(
-  date = forecast_dates,
-  load = as.numeric(ARIMAX_for$mean))
+```{r}
+write.csv(data.frame(date = forecast_dates, load = as.numeric(STLF_fit$mean)),
+          "~/Competition/ShohanLiang_Competition/submission_STLF.csv",
+          row.names = FALSE)
 
-write.csv(submission,
-          file = "~/Competition/ShohanLiang_Competition/submission_ARIMAX_6.csv",
-          row.names = FALSE,
-          )
+write.csv(data.frame(date = forecast_dates, load = as.numeric(NNETAR_for$mean)),
+          "~/Competition/ShohanLiang_Competition/submission_NNETAR.csv",
+          row.names = FALSE)
+
+write.csv(data.frame(date = forecast_dates, load = ensemble_load),
+          "~/Competition/ShohanLiang_Competition/submission_ensemble.csv",
+          row.names = FALSE)
 ```
 
