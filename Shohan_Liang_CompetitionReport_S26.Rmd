@@ -1,0 +1,217 @@
+---
+title: "Forecasting Competition Final Report"
+output:
+  html_document: default
+  pdf_document: default
+editor_options:
+  chunk_output_type: console
+---
+Lauren Shohan & Cecilia Liang  
+GitHub Repository: https://github.com/jingxliang14/ShohanLiang_ENV797_TSA_ForecastCompetition_S26   
+April.25th
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+## Set up
+library(lubridate)
+library(ggplot2)
+library(forecast)  
+library(Kendall)
+library(tseries)
+library(outliers)
+library(tidyverse)
+library(cowplot)
+library(trend)
+library(readxl)
+
+```
+
+# Data Import & Wrangling
+```{r}
+humidity <- read_excel("~/R/ShohanLiang_ENV797_TSA_ForecastCompetition_S26/relative_humidity.xlsx")
+
+temperature <- read_excel("~/R/ShohanLiang_ENV797_TSA_ForecastCompetition_S26/temperature.xlsx")
+
+load <- read_excel("~/R/ShohanLiang_ENV797_TSA_ForecastCompetition_S26/load.xlsx")
+
+```
+
+```{r}
+load_daily <- load %>%
+  select(date, h1:h24) %>%                        
+  pivot_longer(cols = h1:h24,                      
+               names_to = "hour",
+               values_to = "load") %>%
+  group_by(date) %>%                               
+  summarise(daily_load = mean(load, na.rm = TRUE))
+
+
+temp_daily <- temperature %>%
+  pivot_longer(cols = starts_with("t_ws"),
+               names_to  = "station",
+               values_to = "temp") %>%
+  group_by(date) %>%
+  summarise(daily_temp = mean(temp, na.rm = TRUE))
+
+humi_daily <- humidity %>%
+  group_by(date) %>%
+  summarise(humi_daily = mean(c_across(starts_with("rh_ws")), na.rm = TRUE))
+
+```
+
+```{r}
+daily_data <- load_daily %>%
+  left_join(temp_daily, by = "date") %>%
+  left_join(humi_daily,  by = "date") %>%
+  arrange(date)
+
+summary(daily_data)
+```
+
+```{r}
+train <- daily_data %>% 
+  filter(date <= as.Date("2010-06-30"))
+
+val <- daily_data %>% 
+  filter(date >= as.Date("2010-07-01") & date <= as.Date("2010-07-31"))
+
+train_msts <- msts(
+  train$daily_load,
+  seasonal.periods = c(7, 365.25),
+  start = c(2005, 1)
+)
+
+```
+We evaluated several forecasting approaches and selected the five best-performing models based on validation RMSE: Seasonal Naive, TBATS, STLF, ARIMAX, and an ensemble model.
+
+# Model Fit
+## SNAIVE
+The seasonal naive model was applied to the daily load time series (train_msts) with a 31-day forecast horizon. It generates forecasts by repeating the load values from the same day in the previous weekly cycle, effectively capturing weekly seasonality. This model was evaluated on the July 2010 validation period and used as a baseline to benchmark more complex models.
+
+```{r}
+snaive_fit <- snaive(train_msts, h = 31)
+
+snaive_acc <- accuracy(snaive_fit, val$daily_load)
+snaive_acc
+
+autoplot(snaive_fit) + ggtitle("Seasonal Naive Forecast")
+```
+
+## TBATS
+The TBATS model was fitted to the multi-seasonal time series (train_msts) to capture both weekly (7-day) and annual (365.25-day) seasonal patterns. A 31-day forecast was generated and compared against the validation set. 
+```{r}
+TBATS_fit   <- tbats(train_msts)
+TBATS_for   <- forecast(TBATS_fit, h = 31)
+
+autoplot(TBATS_for) +
+  ggtitle("TBATS Forecast - July 2010") +
+  xlab("Date") + ylab("Daily Load")
+
+accuracy(TBATS_for, val$daily_load)
+```
+
+## STLF
+The STLF approach decomposed the load series into seasonal and non-seasonal components using the multi-seasonal structure of train_msts. The seasonally adjusted series was then modeled using exponential smoothing (ETS), and the seasonal component was added back to produce forecasts. A 31-day forecast was evaluated against July 2010 to assess its short-term predictive performance.
+```{r}
+STLF_for <- stlf(train_msts, h = 31, method = "ets")
+accuracy(STLF_for, val$daily_load)
+```
+
+```{r, include=FALSE}
+#NNETAR
+#The NNETAR model was trained on the multi-seasonal load series using lagged observations and seasonal lags as inputs. Multiple networks (repeats = 20) were averaged to improve stability. The model produced a 31-day forecast, evaluated on the validation set. This  was used to capture potential nonlinear relationships in electricity demand that are not well modeled by traditional linear methods.
+NNETAR_fit <- nnetar(train_msts, repeats = 20)
+NNETAR_for <- forecast(NNETAR_fit, h = 31)
+
+autoplot(NNETAR_for) +
+  ggtitle("NNETAR Forecast - July 2010") +
+  xlab("Date") + ylab("Daily Load")
+```
+
+## ARIMAX
+An ARIMA(0,1,5) model was fitted to the training load series with external regressors. Fourier terms (K = c(3, 10)) were used to represent weekly and annual seasonality, while daily temperature and humidity were included as covariates. Future Fourier terms and observed weather data from the validation period were used to generate a 31-day forecast. This model explicitly incorporated weather effects alongside temporal dynamics.
+```{r}
+K_vec <- c(3, 10)
+
+fourier_train <- fourier(train_msts, K = K_vec)
+
+xreg_train <- cbind(
+  fourier_train,
+  temp = train$daily_temp,
+  humi = train$humi_daily
+)
+
+ARIMAX_fit <- Arima(
+  train$daily_load,
+  order = c(0, 1, 5),
+  xreg  = xreg_train
+)
+
+fourier_val <- fourier(train_msts, K = K_vec, h = 31)
+
+xreg_val <- cbind(
+  fourier_val,
+  temp = val$daily_temp,
+  humi = val$humi_daily
+)
+
+ARIMAX_for <- forecast(ARIMAX_fit, xreg = xreg_val, h = 31)
+accuracy(ARIMAX_for, val$daily_load)
+```
+
+## Ensemble forecast
+An ensemble forecast was constructed by averaging the predictions from the TBATS, STLF, and NNETAR models. This combined forecast was evaluated on the validation set to assess whether averaging improved predictive accuracy.
+
+```{r}
+ensemble_val <- (
+  as.numeric(TBATS_for$mean) +
+  as.numeric(STLF_for$mean) +
+  as.numeric(NNETAR_for$mean)
+) / 3
+
+accuracy(ensemble_val, val$daily_load)
+```
+
+
+```{r}
+get_metrics <- function(forecast_obj, actual, name) {
+  
+  # If it's a forecast object
+  if ("forecast" %in% class(forecast_obj)) {
+    acc <- accuracy(forecast_obj, actual)
+    
+    tibble(
+      model = name,
+      RMSE  = acc["Test set", "RMSE"],
+      MAE   = acc["Test set", "MAE"],
+      MAPE  = acc["Test set", "MAPE"]
+    )
+    
+  } else {
+    # If it's a numeric vector (like ensemble)
+    tibble(
+      model = name,
+      RMSE  = sqrt(mean((forecast_obj - actual)^2)),
+      MAE   = mean(abs(forecast_obj - actual)),
+      MAPE  = mean(abs((forecast_obj - actual) / actual)) * 100
+    )
+  }
+}
+
+
+model_results <- bind_rows(
+  get_metrics(snaive_fit,  val$daily_load, "SNAIVE"),
+  get_metrics(TBATS_for,   val$daily_load, "TBATS"),
+  get_metrics(STLF_for,    val$daily_load, "STLF"),
+  get_metrics(ARIMAX_for,  val$daily_load, "ARIMAX"),
+  get_metrics(ensemble_val, val$daily_load, "ENSEMBLE")
+)
+
+model_results %>% arrange(RMSE)
+```
+# Model Comparison
+
+The models were evaluated using RMSE, MAE, and MAPE on the July 2010 validation set.
+
+TBATS achieved the lowest RMSE, indicating it provided the most accurate forecasts among all models. ARIMAX and STLF also performed well, suggesting that both seasonal structure and external covariates contribute to predictive performance.
+The Seasonal Naive model performed substantially worse, confirming that more sophisticated approaches improve forecast accuracy. The ensemble model did not outperform the best individual model, indicating that averaging did not provide additional gains in this case.
+
